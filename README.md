@@ -10,7 +10,16 @@ The code is organized as two subdirectories: `Simulation`, which contains code (
 
 ## Simulation
 
-TODO
+`Runner_OandI_delv_rho_Nr.m` : Runs the 2D simulations for a variety of parameters: _delv_ (which is the intrinsic speed, s0), _Nr_ (which is the number ratio) and _rho_ which is the packing density.
+
+`ABM_bidispese_delv_rho_Nr.m` : Code for the Agent based model for circular agents in 2D periodic domain for a given set of parameters.
+`agents_Expmemory_per2D.m` : Contains the forces on the agents (self-propulsion, inter-agent short ranged interaction, brownian noise (turned off in the default))
+
+`RandomizationOfAgents_InitialConditions.m` and `agents_Expmemory_per2D_Randomization.m` : These functions are used to create randomly packed arrangement of agents for the initial conditions to be used later in `ABM_bidispese_delv_rho_Nr.m`.
+
+`parameters.m` and `parameters_additional.m` the required parameters for the ABM simulations. 
+
+**NOTE: To reproduce the results in the paper (ArXiv link), run `Runner_OandI_delv_rho_Nr.m`. The system size N can be varied in the above m file. The parameters corresponding to the forces between the agents can be changed using the `parameters.m` file.**
 
 ## Analysis
 
