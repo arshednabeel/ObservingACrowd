@@ -5,22 +5,15 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 
-from tqdm import tqdm
 from typing import Callable, Tuple
 from scipy.io import loadmat
 from scipy.ndimage import convolve1d
 from scipy.spatial import Delaunay
-from scipy.stats import binom
 
 
 f_poly = lambda r: 1 / (r ** 3)
 f_exp = lambda r: np.exp(-(r / 3) ** 2)
 
-plt.rcParams.update({
-    'text.usetex': True,
-    'font.family': 'serif',
-    'font.serif': ['Palatino']
-})
 
 def get_filename(rootdir, nr, deltav, density, realization):
     fname = f'ObservingAndInferring_29April2019_N42_NumberRatio_{nr}_packdens_{density}_delV_{deltav}_Fluc_0_Realization_{realization}.mat'
@@ -64,12 +57,12 @@ class AgentDynamics(object):
         """
         if f is None:
             f = lambda r: np.exp(-(r/3) ** 2)
-        vel_avg = moving_average(self.vel[:, 0, :], w=tau, axis=1)
+        vel_avg = moving_average(self.vel[:, 0, :].squeeze(), w=tau, axis=1)
         if not mu:
             return vel_avg > 0
         else:
             phi = self.compute_radial_local_fields(f=f)
-            phi_avg = moving_average(phi[:, 0, :], w=tau, axis=1)
+            phi_avg = moving_average(phi[:, 0, :].squeeze(), w=tau, axis=1)
             return vel_avg > mu * phi_avg
 
     def compute_distance_based_local_fields(self, f: Callable=None):

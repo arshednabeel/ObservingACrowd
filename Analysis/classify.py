@@ -38,7 +38,7 @@ class DataClassifier(object):
     TODO: Add plotting functions if required
     """
 
-    def __init__(self, rootdir, nr, density, deltav, f, realizations=100, tau=50, cachedir=None, scaling_mode='global') -> None:
+    def __init__(self, rootdir, nr, density, deltav, f=f_exp, realizations=100, tau=50, cachedir=None, scaling_mode='global') -> None:
         assert scaling_mode in ['global', 'local'], "Scaling mode should be 'global' or 'local'."
         
         self.rootdir = rootdir
@@ -199,7 +199,7 @@ class DataClassifier(object):
         predictions = predictions.reshape(labels.shape)
         return clf, predictions, X, y, clf.decision_function(X)
 
-    def get_confusion_matrix(self, method: str, scale_factor=None, timeseries=False):
+    def get_confusion_matrix(self, method: str = 'field', scale_factor=None, timeseries=False):
         """ Get the confusion matrix using the given DataClassifier object 
         Params:
             dc: DataClassifier object with preloaded data
@@ -238,11 +238,40 @@ class DataClassifier(object):
         return cm
 
     def get_misclassifications(self, scale_factor):
-        """ Get the average and standard deviation of misclassifications per realization per window. """
+        """ Get number of misclassifications with confidence intervals
+        Returns:
+            nm_mean: Mean number of misclassifications
+            nm_confint: 95 % confidence interval for number of misclassifications
+        """
+        labels = np.expand_dims(self.labels, 1)
+        predictions = self.local_field_classifier(scale_factor)
+        n, T, r = predictions.shape
+        nm_blue = ((labels == BLUE) & (predictions == RED)).sum(axis=0)   # shape (T, r)
+        nm_blue_mean = nm_blue.mean()
+        nm_blue_se = nm_blue.std() / np.sqrt(T * r)
+        nm_blue_confint = (nm_blue_mean - 1.96 * nm_blue_se, nm_blue_mean + 1.96 * nm_blue_se)
 
-        raise NotImplementedError
+        nm_red = ((labels == RED) & (predictions == BLUE)).sum(axis=0)  # shape (T, r)
+        nm_red_mean = nm_red.mean()
+        nm_red_se = nm_red.std() / np.sqrt(T * r)
+        nm_red_confint = (nm_red_mean - 1.96 * nm_red_se, nm_red_mean + 1.96 * nm_red_se)
 
-    def scatterplot(self, scale_factor, filename=None, color1='b', color2='r', show_title=False):
+        return nm_blue_mean, nm_red_mean, nm_blue_confint, nm_red_confint
+
+    def get_misclassification_array(self, scale_factor):
+        """ Get number of misclassifications as an array.
+        Returns:
+            nm_blue: (T, r) array of misclassifications for BLUE group.
+            nm_red: (T, r) array of misclassifications for RED group.
+        """
+
+        labels = np.expand_dims(self.labels, 1)
+        predictions = self.local_field_classifier(scale_factor)
+        nm_blue = ((labels == BLUE) & (predictions == RED)).sum(axis=0)  # shape (T, r)
+        nm_red = ((labels == RED) & (predictions == BLUE)).sum(axis=0)  # shape (T, r)
+        return nm_blue, nm_red
+
+    def scatterplot(self, scale_factor, filename=None, color1='b', color2='r', show_title=False, scale_factor_2=None):
         n, _, T, r = self.vel.shape
         fig, ax = plt.subplots(1, 1, figsize=(7, 7))
         labels = np.expand_dims(self.labels, 1)
@@ -258,6 +287,8 @@ class DataClassifier(object):
             self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
 
         ax.axline(xy1=(0, 0), slope=(1 / scale_factor), linewidth=2, color='k')
+        if scale_factor_2:
+            ax.axline(xy1=(0, 0), slope=(1 / scale_factor_2), linewidth=2, color=(0.5, 0.5, 0.5))
         ax.set_xlabel('$v$')
         ax.set_ylabel('$\\varphi$')
         ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
@@ -271,6 +302,34 @@ class DataClassifier(object):
             plt.close(fig)
         else:
             plt.show()
+
+
+if __name__ == '__main__':
+    rootdir = '/Users/nabeel/Data/ObservingAndInferring/SimData'
+    nr = 16
+    density = 0.45792
+    deltav = 1
+    f = lambda r: np.exp(-((r/3) ** 2))
+    # f = lambda r: 1
+
+    # cachedir = '/Volumes/Backyard/Data/cache/expkernel'
+    # if not os.path.exists(cachedir):
+    #     os.makedirs(cachedir)
+
+    dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav, f=f,
+        realizations=10, cachedir=None)
+
+    # p0 = dc.baseline_classifier()
+    # p1 = dc.local_field_classifier()
+
+    # labels = np.expand_dims(dc.labels, 1)
+
+    # print(f'Baseline: {(p0 == labels).sum()} correct')
+    # print(f'Field-based: {(p1 == labels).sum()} correct')
+    # print(f'Mismatch: {(p0 != p1).sum()}')
+
+    # dc.scale_factor = 0.2
+    dc.scatterplot(scale_factor=dc.scale_factor_analytical)
 
 
 
