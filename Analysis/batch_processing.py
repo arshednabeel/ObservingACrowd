@@ -7,6 +7,7 @@ from joblib import Parallel, delayed
 from classify import DataClassifier, get_scale_factor_analytical
 from agent_dynamics import f_poly, f_exp
 
+
 def cache_all_data_parallel(rootdir, cachedir, nrs, densities, deltavs, f, realizations=100):
     Parallel(n_jobs=6)(delayed(DataClassifier) 
         (rootdir=rootdir, nr=nr, density=density, deltav=deltav, f=f, realizations=realizations, tau=50, cachedir=cachedir, scaling_mode='local')
@@ -15,6 +16,7 @@ def cache_all_data_parallel(rootdir, cachedir, nrs, densities, deltavs, f, reali
         for deltav in deltavs
     )
 
+
 def cache_all_data(rootdir, cachedir, nrs, densities, deltavs, f, realizations=100):
     """ Preload and cache all data for given sets of parameters. """
     for nr in tqdm(nrs, desc='nr'):
@@ -22,6 +24,7 @@ def cache_all_data(rootdir, cachedir, nrs, densities, deltavs, f, realizations=1
             for deltav in tqdm(deltavs, desc='deltav'):
                 DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav, f=f,
                         realizations=realizations, cachedir=cachedir)
+
 
 def compute_classification_metrics(rootdir, cachedir, outfile, nrs, deltavs, densities, f=f_exp):
 
@@ -47,3 +50,18 @@ def compute_classification_metrics(rootdir, cachedir, outfile, nrs, deltavs, den
     np.savez(outfile, baseline_cms=baseline_cms, 
         field_cms_svm=field_cms_svm, field_cms_analytical=field_cms_analytical, mus=mus,
         nrs=nrs, deltavs=deltavs, densities=densities)
+
+
+if __name__ == '__main__':
+
+    rootdir = '/Users/nabeel/Data/ObservingAndInferring/SimData'
+    cachedir = '/Volumes/Backyard/Data/cache/expkernel_relvel'
+    outdir = '/Users/nabeel/Data/output/'
+
+    os.makedirs(cachedir, exist_ok=True)
+
+    nrs = [1, 2, 4, 7, 9, 12, 14, 16, 19, 21]
+    deltavs = [3, 2, 1.5, 1, 0.75, 0.5, 0.25, 0.1, ]
+    densities = [0.57706, 0.45792, 0.3722, 0.30847, 0.25981, 0.22182, ]
+
+    cache_all_data_parallel(rootdir=rootdir, cachedir=cachedir, nrs=nrs, densities=densities, deltavs=deltavs, f=f_exp)

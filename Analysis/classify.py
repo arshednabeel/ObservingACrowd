@@ -8,7 +8,7 @@ from sklearn.svm import LinearSVC
 from tqdm import tqdm, trange
 
 from agent_dynamics import moving_average, f_exp, f_poly
-from agent_dynamics import ADBasic as AgentDynamics
+from agent_dynamics import ADRelative as AgentDynamics
 
 
 RED, BLUE = 0, 1
@@ -274,16 +274,16 @@ class DataClassifier(object):
         if show_title:
             fig.suptitle(f'Nr = {self.nr}, deltav = {self.deltav}, density = {self.density}, scale factor = {scale_factor}')
         ax.scatter(self.vel_avg[:, 0, :, :][labels].flatten(), 
-            self.phi_avg[:, 0, :, :][labels].flatten(), alpha=0.02, facecolor=color1)
+                   self.phi_avg[:, 0, :, :][labels].flatten(), alpha=0.02, facecolor=color1)
         ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(), 
-            self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
+                   self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
 
         ax.axline(xy1=(0, 0), slope=(1 / scale_factor), linewidth=2, color='k')
         if scale_factor_2:
             ax.axline(xy1=(0, 0), slope=(1 / scale_factor_2), linewidth=2, color=(0.5, 0.5, 0.5))
         ax.set_xlabel('$v$')
         ax.set_ylabel('$\\varphi$')
-        ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
+        # ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
         # ax.axis('equal')
         # ax.set(xlim=(-2 * self.deltav, +2 * self.deltav), ylim=(-2 * self.deltav, +2 * self.deltav))
         ax.grid(True)
@@ -298,9 +298,9 @@ class DataClassifier(object):
 
 if __name__ == '__main__':
     rootdir = '/Users/nabeel/Data/ObservingAndInferring/SimData'
-    nr = 16
+    nr = 21
     density = 0.45792
-    deltav = 1
+    deltav = 0.5
     # f = lambda r: 1
 
     # cachedir = '/Volumes/Backyard/Data/cache/expkernel'
@@ -308,7 +308,7 @@ if __name__ == '__main__':
     #     os.makedirs(cachedir)
 
     dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav,
-                        f=lambda r: 5 / r ** 3,
+                        f=f_exp,
                         realizations=10, cachedir=None)
 
     # p0 = dc.baseline_classifier()
@@ -321,7 +321,7 @@ if __name__ == '__main__':
     # print(f'Mismatch: {(p0 != p1).sum()}')
 
     # dc.scale_factor = 0.2
-    dc.scatterplot(scale_factor=dc.scale_factor_analytical)
+    dc.scatterplot(scale_factor=dc.scale_factor_analytical, scale_factor_2=dc.scale_factor_svm)
 
 
 

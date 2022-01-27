@@ -34,8 +34,8 @@ class AgentDynamicsBase(object):
         chop = filename.split('/')[-1].split('_')
         self.nr, self.density, self.deltav = int(chop[4]), float(chop[6]), float(chop[8])
         mat = loadmat(filename)
-        self.pos = np.stack((mat['XA'], mat['YA']), axis=1)
-        self.vel = np.stack((mat['VXA'], mat['VYA']), axis=1)
+        self.pos = np.stack((mat['XA'], mat['YA']), axis=1)    # Shape: (n, 2, T)
+        self.vel = np.stack((mat['VXA'], mat['VYA']), axis=1)  # Shape: (n, 2, T)
         self.xbounds = [0, float(mat['len'])]
         self.ybounds = [-float(mat['wall']), float(mat['wall'])]
         self.xwidth = self.xbounds[1] - self.xbounds[0]
@@ -48,7 +48,7 @@ class AgentDynamicsBase(object):
 
         self.f = f  # (Distance-based) weighting function
 
-        self.labels = self.vel[:, 0, 0] > 0
+        self.labels = self.vel[:, 0, 0] > 0   # Shape: (n, )
 
     def compute_local_fields(self):
         """ Local field (neighbourhood parameter computation function. Derived classes should implement this function
@@ -143,7 +143,7 @@ class ADBasic(AgentDynamicsBase):
             N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
             D = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]))
 
-            F = self.f(D) * N
+            F = self.f(D) # * N
             np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
 
             phi[:, :, t] = F @ self.vel[:, :, t]
@@ -191,8 +191,45 @@ class ADRelative(AgentDynamicsBase):
     """ AgentDynamics, with neighbourhood parameter computed based on the the relative velocities of neighbours.
     Relative velocity of a neighbour j (w.r.t focal agent i) is defined as v_j - v_i. """
 
+    def compute_local_fields_(self):
+        phi = np.zeros_like(self.vel)
+        for t in range(self.T):
+            D = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]))
+            N = np.ones_like(D)  #get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+
+            F = self.f(D) * N   # Shape (n, n)
+            np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
+
+            rel_vel = np.empty((2, self.n, self.n))   # Shape (2, n, n)
+            rel_vel[0, :, :] = np.subtract.outer(self.vel[:, 0, t], self.vel[:, 0, t])
+            rel_vel[1, :, :] = np.subtract.outer(self.vel[:, 1, t], self.vel[:, 1, t])
+
+            # phi[:, :, t] = np.sum(rel_vel * F, axis=2)
+            phi[:, :, t] = np.einsum('jk,ijk->ik', F, rel_vel).T
+
+        return phi
+
     def compute_local_fields(self):
-        raise NotImplementedError
+        phi = np.zeros_like(self.vel)
+        pos_ = tile_periodic_boundaries(self.pos, self.xwidth, self.ywidth)
+        vel_ = np.tile(self.vel, reps=(9, 1, 1))
+
+        for t in range(self.T):
+            # triangulation = Delaunay(pos_[:, :, t])
+            # ptr, idx = triangulation.vertex_neighbor_vertices
+            for i in range(self.n):
+                rel_vel = (vel_[:, :, t] - vel_[i, :, t])                  # (n, 2)
+                d = np.linalg.norm(pos_[:, :, t] - pos_[i, :, t], axis=1)  # (n, )
+                weights = self.f(d)
+                # weights[~np.isfinite(weights)] = 0
+                phi[i, :, t] = np.sum(weights * rel_vel.T, axis=1).T
+
+        return phi
+
+
+
+
+
 
 
 # ------------- Helper Functions ----------------
