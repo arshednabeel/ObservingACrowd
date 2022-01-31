@@ -6,7 +6,7 @@ from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 from scipy.io import loadmat
 
-from agent_dynamics import AgentDynamics
+from agent_dynamics import AgentDynamicsBase as AgentDynamics
 from classify import DataClassifier, f_exp, get_scale_factor_analytical
 
 RED, BLUE = 0, 1

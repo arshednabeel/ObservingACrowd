@@ -50,10 +50,44 @@ class AgentDynamicsBase(object):
 
         self.labels = self.vel[:, 0, 0] > 0   # Shape: (n, )
 
-    def compute_local_fields(self):
+    def compute_local_fields(self, voronoi=False, radial=False, relative=False):
         """ Local field (neighbourhood parameter computation function. Derived classes should implement this function
         with appropriate method of computation. """
-        raise NotImplementedError
+
+        phi = np.zeros_like(self.vel)
+
+        for t in range(self.T):
+
+            # (n, n, 2) array of difference vectors
+            diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
+
+            # (n, n) distance matrix
+            D = np.linalg.norm(diff_vectors, axis=2)
+            if relative:
+                v_j = np.empty((self.n, self.n, 2))  # Shape (2, n, n)
+                v_j[:, :, 0] = np.subtract.outer(self.vel[:, 0, t], self.vel[:, 0, t]).T
+                v_j[:, :, 1] = np.subtract.outer(self.vel[:, 1, t], self.vel[:, 1, t]).T
+            else:
+                v_j = self.vel[:, :, t]
+
+            if radial:
+                # (n, n) array of magnitudes
+                radial_vel_mag = np.sum(diff_vectors * v_j, axis=2) / (D * D)
+                np.fill_diagonal(radial_vel_mag, 0)
+
+                # (n, n, 2) array of radial velocities
+                v_j = (np.expand_dims(radial_vel_mag, axis=2) * diff_vectors)
+
+            if voronoi:
+                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+                F = self.f(D) * N
+            else:
+                F = self.f(D)
+            np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
+
+            phi[:, :, t] = np.sum(np.expand_dims(F, axis=2) * v_j, axis=1)
+
+        return phi
 
     def get_observer_classifications(self, mu: float = 0, tau: int = 50) -> np.ndarray:
         """ Get observer predictions, using baseline algorithm, with window size tau.
@@ -132,18 +166,21 @@ class ADBasic(AgentDynamicsBase):
     """ AgentDynamics, with neighbourhood parameter computed based on neighbour velocities.
     (No projections, no relative velocities) """
 
-    def compute_local_fields(self):
+    def compute_local_fields(self, voronoi=False):
         """
         Compute distance-based local fields from agent data.
         The local field for an agent is a weighted sum of the velocities of its neighbors (see below).
+
         """
 
         phi = np.zeros_like(self.vel)
         for t in range(self.T):
-            N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
             D = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]))
-
-            F = self.f(D) # * N
+            if voronoi:
+                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+                F = self.f(D) * N
+            else:
+                F = self.f(D)
             np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
 
             phi[:, :, t] = F @ self.vel[:, :, t]
@@ -156,7 +193,7 @@ class ADRadial(AgentDynamicsBase):
     Radial velocity of a neighbour j (w.r.t focal agent i) is defined as the projection of v_j along the line joining
     the centers of i and j. """
 
-    def compute_local_fields(self):
+    def compute_local_fields(self, voronoi=False):
         """ Compute distance-based local fields from agent data.
         The local field for an agent is a weighted sum of the velocities of its neighbors (see below).
         """
@@ -164,7 +201,6 @@ class ADRadial(AgentDynamicsBase):
         phi = np.zeros_like(self.vel)
 
         for t in range(self.T):
-            N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
 
             # (n, n, 2) array of difference vectors
             diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
@@ -178,8 +214,11 @@ class ADRadial(AgentDynamicsBase):
 
             # (n, n, 2) array of radial velocities
             radial_vel = (np.expand_dims(radial_vel_mag, axis=2) * diff_vectors)
-
-            F = self.f(D) * N
+            if voronoi:
+                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+                F = self.f(D) * N
+            else:
+                F = self.f(D)
             np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
 
             phi[:, :, t] = np.sum(np.expand_dims(F, axis=2) * radial_vel, axis=1)
@@ -191,13 +230,15 @@ class ADRelative(AgentDynamicsBase):
     """ AgentDynamics, with neighbourhood parameter computed based on the the relative velocities of neighbours.
     Relative velocity of a neighbour j (w.r.t focal agent i) is defined as v_j - v_i. """
 
-    def compute_local_fields_(self):
+    def compute_local_fields(self, voronoi=False):
         phi = np.zeros_like(self.vel)
         for t in range(self.T):
             D = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]))
-            N = np.ones_like(D)  #get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
-
-            F = self.f(D) * N   # Shape (n, n)
+            if voronoi:
+                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+                F = self.f(D) * N
+            else:
+                F = self.f(D)
             np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
 
             rel_vel = np.empty((2, self.n, self.n))   # Shape (2, n, n)
@@ -209,7 +250,7 @@ class ADRelative(AgentDynamicsBase):
 
         return phi
 
-    def compute_local_fields(self):
+    def compute_local_fields_(self):
         phi = np.zeros_like(self.vel)
         pos_ = tile_periodic_boundaries(self.pos, self.xwidth, self.ywidth)
         vel_ = np.tile(self.vel, reps=(9, 1, 1))
@@ -225,12 +266,6 @@ class ADRelative(AgentDynamicsBase):
                 phi[i, :, t] = np.sum(weights * rel_vel.T, axis=1).T
 
         return phi
-
-
-
-
-
-
 
 # ------------- Helper Functions ----------------
 
