@@ -8,7 +8,7 @@ from sklearn.svm import LinearSVC
 from tqdm import tqdm, trange
 
 from agent_dynamics import moving_average, f_exp, f_poly
-from agent_dynamics import AgentDynamicsBase as AgentDynamics
+from agent_dynamics import AgentDynamics
 
 
 RED, BLUE = 0, 1
