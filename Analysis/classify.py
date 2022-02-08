@@ -8,25 +8,39 @@ from sklearn.svm import LinearSVC
 from tqdm import tqdm, trange
 
 from agent_dynamics import moving_average, f_exp, f_poly
-from agent_dynamics import AgentDynamics
+from agent_dynamics import ADFieldBased as AgentDynamics
 
 
 RED, BLUE = 0, 1
+VORONOI = True
+RELATIVE = False
+RADIAL = True
+MEAN = False
+COS = False
 
 
 def get_scale_factor_analytical(nr, deltav, density, f=f_exp):
     """ Function that computes scaling factor analytically. """
-
-    def Pk(k, nr):
-        p = nr / 42
-        return binom.pmf(k, 6, p)
-
-    sigma_s = np.sum([Pk(k, nr) * np.abs(6 - 2 * k) for k in range(0, 7)])
-    L_s = 1 / (np.sqrt(density))
-    f_s = f(L_s)
-    mu = 1 / (f_s * sigma_s)
-
-    return mu
+    if MEAN:
+        return 1.5
+    else:
+        return 0.25
+    # return 1.5
+    # if MEAN and RADIAL:
+    #     return 1.5  # = 6 / (2 + 4 * np.cos(np.pi / 3))
+    # elif MEAN:
+    #     return 1
+    #
+    # def Pk(k, nr):
+    #     p = nr / 42
+    #     return binom.pmf(k, 6, p)
+    #
+    # sigma_s = np.sum([Pk(k, nr) * np.abs(6 - 2 * k) for k in range(0, 7)])
+    # L_s = 1 / (np.sqrt(density))
+    # f_s = f(L_s)
+    # mu = 1 / (f_s * sigma_s)
+    #
+    # return mu
 
 
 def get_sigma_s(nr):
@@ -43,8 +57,8 @@ class DataClassifier(object):
     TODO: Add plotting functions if required
     """
 
-    def __init__(self, rootdir, nr, density, deltav, f=f_exp, realizations=100, tau=50, cachedir=None, scaling_mode='global') -> None:
-        assert scaling_mode in ['global', 'local'], "Scaling mode should be 'global' or 'local'."
+    def __init__(self, rootdir, nr, density, deltav, f=f_exp, realizations=100, tau=50,
+                 cachedir=None, scaling_mode='global') -> None:
         
         self.rootdir = rootdir
         self.nr = nr
@@ -55,16 +69,16 @@ class DataClassifier(object):
         self.f = f
 
         self.initialized = False
-        self.vel = None
-        self.vel_avg = None
-        self.phi = None
-        self.phi_avg = None
-        self.labels = None
-        self.scaling_mode = scaling_mode
+        self.vel = None       # (n, 2, T, R)
+        self.vel_avg = None   # (n, 2, T, R)
+        self.phi = None       # (n, 2, T, R)
+        self.phi_avg = None   # (n, 2, T, R)
+        self.labels = None    # (n, R)
+        self.scaling_mode = scaling_mode  # FIXME: Unused, can be removed.
 
         self.load_data(cachedir)
-        self.sanitize_data()
 
+        self.sanitize_data()
         self.scale_factor_svm = self.get_scale_factor_svm()
         self.scale_factor_analytical = self.get_scale_factor_analytical()
 
@@ -74,6 +88,7 @@ class DataClassifier(object):
             cachefile = f'Cached_N42_NumberRatio_{self.nr}_packdens_{self.density}_delV_{self.deltav}_realizations_{self.realizations}.pkl'
             cachefile = os.path.join(cachedir, cachefile)
             if os.path.exists(cachefile):
+
                 # print(f'Loading from cache.: {cachefile}')
                 with open(cachefile, 'rb') as cache:
                     data = pickle.load(cache)
@@ -100,7 +115,7 @@ class DataClassifier(object):
                 self.phi_avg = np.zeros_like(self.vel)
                 self.labels = np.empty((ad.n, self.realizations), dtype=bool)
 
-            phi = ad.compute_local_fields(voronoi=False, relative=True, radial=False)
+            phi = ad.compute_local_fields(voronoi=VORONOI, relative=RELATIVE, radial=RADIAL, mean=MEAN, cos=COS)
 
             # Sanity checks
             if (np.abs(ad.vel) > 1e5).any():
@@ -173,6 +188,11 @@ class DataClassifier(object):
     def field_only_classifier(self):
         return self.phi_avg[:, 0, :, :] > 0
 
+    def mixture_velocity_classifier(self):
+        mix_vel = self.vel[:, 0, ...].mean(axis=0)
+        predictions = (self.vel_avg[:, 0, :, :] > mix_vel).squeeze()
+        return predictions
+
     def local_field_svm_classifer(self):
         n, _, T, r = self.vel.shape
         clf = LinearSVC(dual=False, fit_intercept=False, class_weight='balanced')
@@ -194,7 +214,7 @@ class DataClassifier(object):
         predictions = predictions.reshape(labels.shape)
         return clf, predictions, X, y, clf.decision_function(X)
 
-    def get_confusion_matrix(self, method: str = 'field', scale_factor=None, timeseries=False):
+    def get_confusion_matrix(self, method: str = 'field', scale_factor=None, timeseries=False, scaled=False):
         """ Get the confusion matrix using the given DataClassifier object 
         Params:
             dc: DataClassifier object with preloaded data
@@ -206,7 +226,7 @@ class DataClassifier(object):
             Confusion matrix cm of predictions.
         """
 
-        assert method in ['baseline', 'field', 'field_only'], "method should be 'baseline' or 'field'"
+        assert method in ['baseline', 'field', 'field_only', 'mixvel']
         if scale_factor is None:
             scale_factor = self.scale_factor_svm
 
@@ -215,22 +235,28 @@ class DataClassifier(object):
             predictions = self.baseline_classifier()
         elif method == 'field':
             predictions = self.local_field_classifier(scale_factor)
-        else:
+        elif method == 'field_only':
             predictions = self.field_only_classifier()
+        else:
+            predictions = self.mixture_velocity_classifier()
 
         if timeseries:
             axis = (0, 2)
-            cm = np.zeros((2, 2, predictions.shape[1]), dtype=int)
+            cm = np.zeros((2, 2, predictions.shape[1]), dtype=float)
             cm[RED, RED, :] = ((labels == RED) & (predictions == RED)).sum(axis=axis)
             cm[RED, BLUE, :] = ((labels == RED) & (predictions == BLUE)).sum(axis=axis)
             cm[BLUE, RED, :] = ((labels == BLUE) & (predictions == RED)).sum(axis=axis)
             cm[BLUE, BLUE, :] = ((labels == BLUE) & (predictions == BLUE)).sum(axis=axis)
         else:
-            cm = np.zeros((2, 2), dtype=int)
+            cm = np.zeros((2, 2), dtype=float)
             cm[RED, RED] = ((labels == RED) & (predictions == RED)).sum()
             cm[RED, BLUE] = ((labels == RED) & (predictions == BLUE)).sum()
             cm[BLUE, RED] = ((labels == BLUE) & (predictions == RED)).sum()
             cm[BLUE, BLUE] = ((labels == BLUE) & (predictions == BLUE)).sum()
+
+        if scaled:
+            cm[RED, :] = cm[RED, :] / cm[RED, :].sum()
+            cm[BLUE, :] = cm[BLUE, :] / cm[BLUE, :].sum()
 
         return cm
 
@@ -283,15 +309,15 @@ class DataClassifier(object):
         ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(),
                    self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
 
-        ax.axline(xy1=(0, 0), slope=(1 / scale_factor), linewidth=2, color='k')
+        ax.axline(xy1=(0, 0), slope=1/scale_factor, linewidth=2, color='k')
         if scale_factor_2:
             ax.axline(xy1=(0, 0), slope=(1 / scale_factor_2), linewidth=2, color=(0.5, 0.5, 0.5))
         ax.set_xlabel('$v$')
         ax.set_ylabel('$\\varphi$')
         # ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
-        ax.axis('equal')
-        ax.set(xlim=[-3, 3], ylim=[-3, 3])
-        # ax.set(xlim=(-2 * self.deltav, +2 * self.deltav), ylim=(-2 * self.deltav, +2 * self.deltav))
+        # ax.axis('equal')
+        # ax.set(xlim=[-3, 3], ylim=[-3, 3])
+        # ax.set(xlim=(-1.5 * self.deltav, +1.5 * self.deltav), ylim=(-1.5 * self.deltav, +1.5 * self.deltav))
         ax.grid(True)
 
         plt.tight_layout()
@@ -301,34 +327,115 @@ class DataClassifier(object):
         else:
             plt.show()
 
+    def ideal_scatterplot(self):
+        n, _, T, r = self.vel.shape
+        fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+        labels = np.expand_dims(self.labels, 1)
+        labels = np.broadcast_to(labels, (n, T, r))
+
+        v0 = self.vel[:, 0, 0, :]  # x-component of desired velocity
+        v0 = np.expand_dims(v0, 1)
+        v0 = np.broadcast_to(v0, (n, T, r))
+        phi = self.vel_avg[:, 0, :, :] - v0
+
+        ax.scatter(self.vel_avg[:, 0, :, :][labels].flatten(),
+                   phi[labels].flatten(), alpha=0.02, facecolor='b')
+        ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(),
+                   phi[~labels].flatten(), alpha=0.02, facecolor='r')
+
+        ax.axis('equal')
+        ax.grid(True)
+        ax.set(xlabel='$v$', ylabel='$\\varphi_{\\mathrm{ideal}}$')
+
+        plt.tight_layout()
+        plt.show()
+
+    def show_distributions(self, scale_factor):
+        fig, ax = plt.subplots(3, 1, figsize=(4, 12)) #, sharex=True)
+
+        n, _, T, r = self.vel.shape
+        labels = np.expand_dims(self.labels, 1)
+        labels = np.broadcast_to(labels, (n, T, r))
+        mix_vel = self.vel[:, 0, ...].mean(axis=0)
+
+        ax[0].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
+        ax[0].axvline(mix_vel[0, 0], color=(0.6, 0.6, 0.6), linewidth=1)
+        ax[0].hist(self.vel_avg[:, 0, :, :][labels].flatten(), color='b', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        ax[0].hist(self.vel_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        # ax[0].hist(mix_vel.flatten(), color='k', alpha=0.5, bins=100, density=True, histtype='stepfilled')
+        ax[0].set(title='$v$ distribution', xlabel='$v_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
+
+        ax[1].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
+        ax[1].hist(self.phi_avg[:, 0, :, :][labels].flatten(), color='b', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        ax[1].hist(self.phi_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        ax[1].set(title='$\\phi$ distribution', xlabel='$\\phi_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
+
+        ax[2].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
+        ax[2].hist(self.vel_avg[:, 0, :, :][labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
+            labels].flatten(), color='b', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        ax[2].hist(self.vel_avg[:, 0, :, :][~labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
+            ~labels].flatten(), color='r', alpha=0.5, bins=100,
+                   density=True, histtype='stepfilled')
+        ax[2].set(title='$v - \\phi$ distribution', xlabel='$v_i - \\phi_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
+
+        fig.suptitle(f'$N_r = {nr}, s_0 = {deltav}, \\rho = {density}$')
+        plt.tight_layout()
+        plt.show()
+
+
+
 
 if __name__ == '__main__':
     rootdir = '/Users/nabeel/Data/ObservingAndInferring/SimData'
-    nr = 21
+    nr = 4
     # density = 0.57706
     density = 0.45792
-    deltav = 1.5
-    # f = lambda r: 1
-
-    # cachedir = '/Volumes/Backyard/Data/cache/expkernel'
-    # if not os.path.exists(cachedir):
-    #     os.makedirs(cachedir)
-
+    # density = 0.22182
+    deltav = 0.75
+    # deltav = 1
+    f = lambda r: 1 #np.exp(-(r / 3) ** 2)
     dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav,
-                        f=f_exp,
+                        f=f,
                         realizations=10, cachedir=None)
+    # dc.scatterplot(scale_factor=dc.scale_factor_analytical, scale_factor_2=dc.scale_factor_svm) #dc.scale_factor_analytical)
+    dc.show_distributions(scale_factor=dc.scale_factor_analytical) #dc.scale_factor_analytical)
+    # dc.show_distributions(scale_factor=dc.scale_factor_svm)
 
-    # p0 = dc.baseline_classifier()
-    # p1 = dc.local_field_classifier()
+    # fig, ax = plt.subplots(figsize=(7, 7))
+    # ax.scatter(dc.vel[:, 0, 0, :].squeeze(), dc.vel[:, 0, :, :].squeeze())
 
-    # labels = np.expand_dims(dc.labels, 1)
+    #
+    # # fig, ax = plt.subplots(figsize=(7, 5))
+    # # mix_vel = dc.vel[:, 0, ...].mean(axis=0)
+    # # v = dc.vel_avg[:, 0, :, 0].T
+    # # ax.plot(v, alpha=0.5, color='r')
+    # # ax.plot(v.mean(axis=1), color='k')
+    # # ax.set(ylim=[0.6, 0.8])
+    # #
+    # # # ax.plot(mix_vel, alpha=0.5, color='k')
+    # # plt.show()
+    #
+    # # p0 = dc.baseline_classifier()
+    # # p1 = dc.local_field_classifier()
+    #
+    # # labels = np.expand_dims(dc.labels, 1)
+    #
+    # # print(f'Baseline: {(p0 == labels).sum()} correct')
+    # # print(f'Field-based: {(p1 == labels).sum()} correct')
+    # # print(f'Mismatch: {(p0 != p1).sum()}')
+    #
+    # # dc.scale_factor = 0.2
+    # dc.scatterplot(scale_factor=1/6, scale_factor_2=dc.scale_factor_svm)
+    # dc.ideal_scatterplot()
 
-    # print(f'Baseline: {(p0 == labels).sum()} correct')
-    # print(f'Field-based: {(p1 == labels).sum()} correct')
-    # print(f'Mismatch: {(p0 != p1).sum()}')
-
-    # dc.scale_factor = 0.2
-    dc.scatterplot(scale_factor=dc.scale_factor_analytical, scale_factor_2=dc.scale_factor_svm)
+    # print(dc.mixture_velocity_classifier())
+    # dc.show_distributions(scale_factor=1/6)#dc.scale_factor_analytical)
+    # print(dc.get_confusion_matrix(method='field_only', scaled=True))
 
 
 

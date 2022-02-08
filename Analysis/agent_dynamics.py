@@ -50,63 +50,6 @@ class AgentDynamics(object):
 
         self.labels = self.vel[:, 0, 0] > 0   # Shape: (n, )
 
-    def compute_local_fields(self, voronoi=False, radial=False, relative=False):
-        """ Local field (neighbourhood parameter computation function. Derived classes should implement this function
-        with appropriate method of computation. """
-
-        phi = np.zeros_like(self.vel)
-
-        for t in range(self.T):
-
-            # (n, n, 2) array of difference vectors
-            diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
-
-            # (n, n) distance matrix
-            D = np.linalg.norm(diff_vectors, axis=2)
-            if relative:
-                v_j = np.empty((self.n, self.n, 2))  # Shape (2, n, n)
-                v_j[:, :, 0] = np.subtract.outer(self.vel[:, 0, t], self.vel[:, 0, t]).T
-                v_j[:, :, 1] = np.subtract.outer(self.vel[:, 1, t], self.vel[:, 1, t]).T
-            else:
-                v_j = self.vel[:, :, t]
-
-            if radial:
-                # (n, n) array of magnitudes
-                radial_vel_mag = np.sum(diff_vectors * v_j, axis=2) / (D * D)
-                np.fill_diagonal(radial_vel_mag, 0)
-
-                # (n, n, 2) array of radial velocities
-                v_j = (np.expand_dims(radial_vel_mag, axis=2) * diff_vectors)
-
-            if voronoi:
-                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
-                F = self.f(D) * N
-            else:
-                F = self.f(D)
-            np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
-
-            phi[:, :, t] = np.sum(np.expand_dims(F, axis=2) * v_j, axis=1)
-
-        return phi
-
-    def get_observer_classifications(self, mu: float = 0, tau: int = 50) -> np.ndarray:
-        """ Get observer predictions, using baseline algorithm, with window size tau.
-        Args:
-            tau: Window size for prediction
-            mu: Scale factor for field-based prediction. If mu=0, velocity-based prediction is used.
-        Returns:
-            n x T ndarray with predictions for each timepoint.
-            Predictions for t < tau are invalid, return array size is kept as n x T for proper alignment.
-        """
-
-        vel_avg = moving_average(self.vel[:, 0, :].squeeze(), w=tau, axis=1)
-        if not mu:
-            return vel_avg > 0
-        else:
-            phi = self.compute_local_fields()
-            phi_avg = moving_average(phi[:, 0, :].squeeze(), w=tau, axis=1)
-            return vel_avg > mu * phi_avg
-
     def visualize(self, t, mu=None, ax=None, face_colors=None, edge_colors=None, focal_agents=None):
         """ 
         Plot agent positions at a given time point t.
@@ -160,6 +103,118 @@ class AgentDynamics(object):
 
         self.pos[:, 0, :] = _wrap(self.pos[:, 0, :], self.xbounds[0], self.xbounds[1])
         self.pos[:, 1, :] = _wrap(self.pos[:, 1, :], self.ybounds[0], self.ybounds[1])
+
+
+class ADLaplacian(AgentDynamics):
+    def get_laplacian_matrix(self, t, mode):
+        """
+        Get weighted or unweighted graph Laplacian matrix, for the Voronoi neighbourhood graph at a given time-point.
+
+        Args:
+            t (int)    : Time index
+            mode (str) : Weighting mode. simple: unweighted, angle: abs(cos(theta))
+        """
+        assert mode in ['simple', 'angle']
+
+        N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+
+        if mode == 'angle':
+            # (n, n, 2) array of difference vectors
+            diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
+            D = np.linalg.norm(diff_vectors, axis=2)  # (n, n) distance matrix
+            np.fill_diagonal(D, 1)  # To avoid divide-by-zero errors. This will be zeroed out eventually.
+            W = np.abs(diff_vectors[:, :, 0] / D)     # (n, n) matrix of abs(cos(theta))
+            L = - N * W
+        else:
+            L = - N
+
+        np.fill_diagonal(L, -np.nansum(L, axis=1))
+
+        return L
+
+    def get_velocity_field_laplacian(self, mode):
+        """ Return the laplacian of the velocity field.
+        Args:
+            mode (str) : 'simple' or 'angle', determines the mode for computing laplacian matrix.
+        """
+
+        psi = np.empty_like(self.vel)
+        for t in range(self.T):
+            L = self.get_laplacian_matrix(t, mode=mode)
+            psi[:, :, t] = L @ self.vel[:, :, t]
+
+        return psi
+
+
+class ADFieldBased(AgentDynamics):
+
+    def compute_local_fields(self, voronoi=False, radial=False, relative=False, mean=False, cos=False):
+        """ Local field (neighbourhood parameter computation function. Derived classes should implement this function
+        with appropriate method of computation. """
+
+        assert (not mean) or voronoi, 'If mean is True, voronoi must be True.'
+        assert (not cos and radial) or (cos and not radial), 'Only one of `cos` or `radial` must be True.'
+
+        phi = np.zeros_like(self.vel)
+
+        for t in range(self.T):
+
+            # (n, n, 2) array of difference vectors
+            diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
+
+            # (n, n) distance matrix
+            D = np.linalg.norm(diff_vectors, axis=2)
+            np.fill_diagonal(D, 1)  # To avoid divide-by-zero errors. This will be zeroed out eventually.
+            if relative:
+                v_j = np.empty((self.n, self.n, 2))  # Shape (2, n, n)
+                v_j[:, :, 0] = np.subtract.outer(self.vel[:, 0, t], self.vel[:, 0, t])
+                v_j[:, :, 1] = np.subtract.outer(self.vel[:, 1, t], self.vel[:, 1, t])
+            else:
+                v_j = self.vel[:, :, t]
+
+            if radial:
+                # (n, n) array of magnitudes
+                radial_vel_mag = np.sum(diff_vectors * v_j, axis=2) / (D * D)
+                np.fill_diagonal(radial_vel_mag, 0)
+
+                # (n, n, 2) array of radial velocities
+                v_j = np.expand_dims(radial_vel_mag, axis=2) * diff_vectors
+            elif cos:
+                cos_angles = np.abs(diff_vectors[:, :, 0] / D)  # (n, n)
+                # v_j = np.expand_dims(cos_angles, axis=2) * diff_vectors #TODO How did this even work?!
+                v_j = cos_angles @ v_j
+
+            if voronoi:
+                N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
+                F = self.f(D) * N
+            else:
+                F = self.f(D)
+            np.fill_diagonal(F, 0)  # Agent does not contribute to its own local field.
+
+            phi_t = np.sum(np.expand_dims(F, axis=2) * v_j, axis=1)
+            if mean:
+                phi_t = (phi_t.T / N.sum(axis=1)).T  # Divide by number of neighbours
+            phi[:, :, t] = phi_t
+
+        return phi
+
+    def get_observer_classifications(self, mu: float = 0, tau: int = 50) -> np.ndarray:
+        """ Get observer predictions, using baseline algorithm, with window size tau.
+        Args:
+            tau: Window size for prediction
+            mu: Scale factor for field-based prediction. If mu=0, velocity-based prediction is used.
+        Returns:
+            n x T ndarray with predictions for each timepoint.
+            Predictions for t < tau are invalid, return array size is kept as n x T for proper alignment.
+        """
+
+        vel_avg = moving_average(self.vel[:, 0, :].squeeze(), w=tau, axis=1)
+        if not mu:
+            return vel_avg > 0
+        else:
+            phi = self.compute_local_fields()
+            phi_avg = moving_average(phi[:, 0, :].squeeze(), w=tau, axis=1)
+            return vel_avg > mu * phi_avg
 
 
 
@@ -288,3 +343,22 @@ def get_voronoi_neighbor_matrix(pos: np.ndarray, periodic=True, xwidth: float = 
         N = N_
     
     return N
+
+
+if __name__ == '__main__':
+    nr = 21
+    # density = 0.57706
+    density = 0.45792
+    # density = 0.22182
+    # deltav = 0.75
+    deltav = 3
+    filename = f'/Users/nabeel/Data/ObservingAndInferring/SimData/' \
+        f'ObservingAndInferring_29April2019_N42_NumberRatio_{nr}_packdens_{density}_delV_{deltav}_Fluc_0_Realization_1.mat'
+    ad = ADLaplacian(filename=filename)
+    psi = ad.get_velocity_field_laplacian(mode='angle')
+    # print(psi)
+    plt.hist(psi[:, 0, :].flatten(), bins=100, density=True)
+    plt.show()
+
+    plt.hist(ad.vel[:, 0, :].flatten(), bins=100, density=True)
+    plt.show()
