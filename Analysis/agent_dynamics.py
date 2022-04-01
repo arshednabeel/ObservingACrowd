@@ -13,6 +13,7 @@ from scipy.spatial import Delaunay
 
 def f_poly(r): return 1 / (r ** 3)
 def f_exp(r): return np.exp(-(r / 3) ** 2)
+def f_const(r): return 1
 
 
 def get_filename(rootdir, nr, deltav, density, realization):
@@ -24,7 +25,7 @@ def get_filename(rootdir, nr, deltav, density, realization):
 
 class AgentDynamics(object):
     
-    def __init__(self, filename: str, f: Callable = f_exp) -> None:
+    def __init__(self, filename: str, f: Callable = f_const) -> None:
         """ Initialize class using data from MAT file.
         Args:
             filename: Filename of MAT file to load.
@@ -114,7 +115,7 @@ class ADLaplacian(AgentDynamics):
             t (int)    : Time index
             mode (str) : Weighting mode. simple: unweighted, angle: abs(cos(theta))
         """
-        assert mode in ['simple', 'angle']
+        assert mode in ['simple', 'angle', 'projection']
 
         N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
 
@@ -125,11 +126,28 @@ class ADLaplacian(AgentDynamics):
             np.fill_diagonal(D, 1)  # To avoid divide-by-zero errors. This will be zeroed out eventually.
             W = np.abs(diff_vectors[:, :, 0] / D)     # (n, n) matrix of abs(cos(theta))
             L = - N * W
+        elif mode == 'projection':
+            diff_vectors = distance_matrix(self.pos[:, :, t], np.array([self.xwidth, self.ywidth]), mode='difference')
+            D = np.linalg.norm(diff_vectors, axis=2)  # (n, n) distance matrix
+            np.fill_diagonal(D, 1)  # To avoid divide-by-zero errors. This will be zeroed out eventually.
+
+            rhat = diff_vectors.T / D  # (2, n, n) array of unit vectors
+            W = (rhat[0, ...] ** 2 +
+                 rhat[0, ...] * rhat[1, ...] * self.vel[:, 1, t] / self.vel[:, 0, t])
+            L = - N * W
+
+            # print((L.min(), L.max()))
+
+            # L_ = np.empty_like(L)
+            # for i in range(self.n):
+            #     for j in range(self.n):
+            #         L_[i, j] = (rhat[0, i, j] ** 2 +
+            #                     rhat[0, i, j] * rhat[1, i, j] * self.vel[j, 1, t] / self.vel[j, 0, t])
         else:
             L = - N
 
         np.fill_diagonal(L, -np.nansum(L, axis=1))
-
+        # np.fill_diagonal(L, 0)
         return L
 
     def get_velocity_field_laplacian(self, mode):
@@ -153,7 +171,7 @@ class ADFieldBased(AgentDynamics):
         with appropriate method of computation. """
 
         assert (not mean) or voronoi, 'If mean is True, voronoi must be True.'
-        assert (not cos and radial) or (cos and not radial), 'Only one of `cos` or `radial` must be True.'
+        assert not (cos and radial), 'Only one of `cos` or `radial` must be True.'
 
         phi = np.zeros_like(self.vel)
 
@@ -182,7 +200,7 @@ class ADFieldBased(AgentDynamics):
             elif cos:
                 cos_angles = np.abs(diff_vectors[:, :, 0] / D)  # (n, n)
                 # v_j = np.expand_dims(cos_angles, axis=2) * diff_vectors #TODO How did this even work?!
-                v_j = cos_angles @ v_j
+                v_j = np.expand_dims(cos_angles, axis=2) * v_j
 
             if voronoi:
                 N = get_voronoi_neighbor_matrix(self.pos[:, :, t], periodic=True, xwidth=self.xwidth, ywidth=self.ywidth)
@@ -198,7 +216,8 @@ class ADFieldBased(AgentDynamics):
 
         return phi
 
-    def get_observer_classifications(self, mu: float = 0, tau: int = 50) -> np.ndarray:
+    def get_observer_classifications(self, mu: float = 0, tau: int = 50,
+                                     voronoi=True, radial=True, relative=False, mean=True, cos=False) -> np.ndarray:
         """ Get observer predictions, using baseline algorithm, with window size tau.
         Args:
             tau: Window size for prediction
@@ -212,7 +231,7 @@ class ADFieldBased(AgentDynamics):
         if not mu:
             return vel_avg > 0
         else:
-            phi = self.compute_local_fields()
+            phi = self.compute_local_fields(voronoi=voronoi, radial=radial, relative=relative, mean=mean, cos=cos)
             phi_avg = moving_average(phi[:, 0, :].squeeze(), w=tau, axis=1)
             return vel_avg > mu * phi_avg
 
@@ -355,10 +374,15 @@ if __name__ == '__main__':
     filename = f'/Users/nabeel/Data/ObservingAndInferring/SimData/' \
         f'ObservingAndInferring_29April2019_N42_NumberRatio_{nr}_packdens_{density}_delV_{deltav}_Fluc_0_Realization_1.mat'
     ad = ADLaplacian(filename=filename)
-    psi = ad.get_velocity_field_laplacian(mode='angle')
+    ad2 = ADFieldBased(filename=filename)
+    psi = ad.get_velocity_field_laplacian(mode='projection')
+    phi = ad2.compute_local_fields(voronoi=True, radial=True)
     # print(psi)
-    plt.hist(psi[:, 0, :].flatten(), bins=100, density=True)
+    plt.plot(psi[0, 0, :])
+    plt.ylim([-10, 10])
     plt.show()
-
-    plt.hist(ad.vel[:, 0, :].flatten(), bins=100, density=True)
-    plt.show()
+    # plt.hist(psi[:, 0, :].flatten(), bins=100, density=True)
+    # plt.show()
+    #
+    # plt.hist(ad.vel[:, 0, :].flatten(), bins=100, density=True)
+    # plt.show()

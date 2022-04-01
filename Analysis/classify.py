@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from scipy.stats import binom
 from sklearn.svm import LinearSVC
 from tqdm import tqdm, trange
@@ -15,16 +16,34 @@ RED, BLUE = 0, 1
 VORONOI = True
 RELATIVE = False
 RADIAL = True
-MEAN = False
+MEAN = True
 COS = False
+
+C_RED = (178/255, 24/255, 43/255)
+C_BLUE = (33/255, 102/255, 172/255)
+
+C_RED_DARK = (103/255, 0/255, 31/255)
+C_BLUE_DARK = (5/255, 48/255, 97/255)
+
+plt.rcParams.update(
+    {
+        'font.size': 32,
+    }
+)
 
 
 def get_scale_factor_analytical(nr, deltav, density, f=f_exp):
     """ Function that computes scaling factor analytically. """
-    if MEAN:
-        return 1.5
+    if RADIAL:
+        if MEAN:
+            return 1.5
+        else:
+            return 0.25
     else:
-        return 0.25
+        if MEAN:
+            return 1
+        else:
+            return 1/6
     # return 1.5
     # if MEAN and RADIAL:
     #     return 1.5  # = 6 / (2 + 4 * np.cos(np.pi / 3))
@@ -151,9 +170,12 @@ class DataClassifier(object):
                 self.vel_avg[..., i] = self.vel_avg[..., i - 1]
                 self.phi_avg[..., i] = self.phi_avg[..., i - 1]
 
-    def get_scale_factor_svm(self):
+    def get_scale_factor_svm(self, balanced=False):
         n, _, T, r = self.vel.shape
-        clf = LinearSVC(dual=False, fit_intercept=False)
+        if balanced:
+            clf = LinearSVC(dual=False, fit_intercept=False, class_weight='balanced')
+        else:
+            clf = LinearSVC(dual=False, fit_intercept=False)
 
         vel = self.vel_avg[:, 0, ...].flatten()
         phi = self.phi_avg[:, 0, ...].flatten()
@@ -296,7 +318,7 @@ class DataClassifier(object):
 
     def scatterplot(self, scale_factor, filename=None, color1='b', color2='r', show_title=False, scale_factor_2=None):
         n, _, T, r = self.vel.shape
-        fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
         labels = np.expand_dims(self.labels, 1)
         labels = np.broadcast_to(labels, (n, T, r))
         # print(f'labels.dtype: {labels.dtype}')
@@ -305,19 +327,19 @@ class DataClassifier(object):
         if show_title:
             fig.suptitle(f'Nr = {self.nr}, deltav = {self.deltav}, density = {self.density}, scale factor = {scale_factor}')
         ax.scatter(self.vel_avg[:, 0, :, :][labels].flatten(),
-                   self.phi_avg[:, 0, :, :][labels].flatten(), alpha=0.02, facecolor=color1)
+                   scale_factor * self.phi_avg[:, 0, :, :][labels].flatten(), alpha=0.02, facecolor=color1)
         ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(),
-                   self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
+                   scale_factor * self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
 
-        ax.axline(xy1=(0, 0), slope=1/scale_factor, linewidth=2, color='k')
+        ax.axline(xy1=(0, 0), slope=1, color=(0.5, 0.5, 0.5))
         if scale_factor_2:
-            ax.axline(xy1=(0, 0), slope=(1 / scale_factor_2), linewidth=2, color=(0.5, 0.5, 0.5))
-        ax.set_xlabel('$v$')
-        ax.set_ylabel('$\\varphi$')
-        # ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
-        # ax.axis('equal')
+            ax.axline(xy1=(0, 0), slope=(scale_factor / scale_factor_2), color=(0.5, 0.5, 0.5))
+        ax.set_xlabel('$v_i$')
+        ax.set_ylabel('$\\phi_i$')
+        ax.axis('equal')
         # ax.set(xlim=[-3, 3], ylim=[-3, 3])
-        # ax.set(xlim=(-1.5 * self.deltav, +1.5 * self.deltav), ylim=(-1.5 * self.deltav, +1.5 * self.deltav))
+        ax.set(xlim=(-1.1 * self.deltav, +1.1 * self.deltav), ylim=(-1.1 * self.deltav, +1.1 * self.deltav))
+        ax.set(xticks=[-self.deltav, 0, self.deltav], yticks=[-self.deltav, 0, self.deltav])
         ax.grid(True)
 
         plt.tight_layout()
@@ -327,63 +349,75 @@ class DataClassifier(object):
         else:
             plt.show()
 
-    def ideal_scatterplot(self):
+    def show_distributions_2d(self, scale_factor, filename=None, color1='b', color2='r', show_title=False, scale_factor_2=None):
         n, _, T, r = self.vel.shape
-        fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
         labels = np.expand_dims(self.labels, 1)
         labels = np.broadcast_to(labels, (n, T, r))
+        # print(f'labels.dtype: {labels.dtype}')
+        # print(f'labels.shape: {labels.shape}')
+        # print(f'self.labels.dtype: {self.labels.dtype}')
+        if show_title:
+            fig.suptitle(f'Nr = {self.nr}, deltav = {self.deltav}, density = {self.density}, scale factor = {scale_factor}')
+        # ax.scatter(self.vel_avg[:, 0, :, :][labels].flatten(),
+        #            scale_factor * self.phi_avg[:, 0, :, :][labels].flatten(), alpha=0.02, facecolor=color1)
+        # ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(),
+        #            scale_factor * self.phi_avg[:, 0, :, :][~labels].flatten(), alpha=0.02, facecolor=color2)
+        sns.kdeplot(ax=ax, x=self.vel_avg[:, 0, 10:, :].flatten(),
+                    y=scale_factor * self.phi_avg[:, 0, 10:, :].flatten(),
+                    hue=labels[:, 10:, :].flatten(),
+                    palette={True: C_BLUE, False: C_RED},
+                    common_norm=False,
+                    # thresh=0.01,
+                    fill=True,
+                    legend=False,
+                    alpha=0.6)
 
-        v0 = self.vel[:, 0, 0, :]  # x-component of desired velocity
-        v0 = np.expand_dims(v0, 1)
-        v0 = np.broadcast_to(v0, (n, T, r))
-        phi = self.vel_avg[:, 0, :, :] - v0
-
-        ax.scatter(self.vel_avg[:, 0, :, :][labels].flatten(),
-                   phi[labels].flatten(), alpha=0.02, facecolor='b')
-        ax.scatter(self.vel_avg[:, 0, :, :][~labels].flatten(),
-                   phi[~labels].flatten(), alpha=0.02, facecolor='r')
-
+        ax.axline(xy1=(0, 0), slope=1, color=(0.5, 0.5, 0.5))
+        if scale_factor_2:
+            ax.axline(xy1=(0, 0), slope=(scale_factor / scale_factor_2), color=(0.5, 0.5, 0.5))
+        ax.set_xlabel('$v_i$')
+        ax.set_ylabel('$\\phi_i$')
         ax.axis('equal')
+        # ax.set(xlim=[-3, 3], ylim=[-3, 3])
+        ax.set(xlim=(-2.3, 2.3), ylim=(-2.3, 2.3))
+        ax.set(xticks=[-2, 0, 2], yticks=[-2, 0, 2])
         ax.grid(True)
-        ax.set(xlabel='$v$', ylabel='$\\varphi_{\\mathrm{ideal}}$')
 
         plt.tight_layout()
-        plt.show()
+        if filename:
+            fig.savefig(filename)
+            plt.close(fig)
+        else:
+            plt.show()
 
-    def show_distributions(self, scale_factor):
-        fig, ax = plt.subplots(3, 1, figsize=(4, 12)) #, sharex=True)
+    def show_distributions(self, scale_factor, color1='b', color2='r'):
+        fig, ax = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
 
         n, _, T, r = self.vel.shape
         labels = np.expand_dims(self.labels, 1)
         labels = np.broadcast_to(labels, (n, T, r))
-        mix_vel = self.vel[:, 0, ...].mean(axis=0)
+        # mix_vel = self.vel[:, 0, ...].mean(axis=0)
 
         ax[0].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
-        ax[0].axvline(mix_vel[0, 0], color=(0.6, 0.6, 0.6), linewidth=1)
-        ax[0].hist(self.vel_avg[:, 0, :, :][labels].flatten(), color='b', alpha=0.5, bins=100,
+        # ax[0].axvline(mix_vel[0, 0], color=(0.6, 0.6, 0.6), linewidth=1)
+        ax[0].hist(self.vel_avg[:, 0, :, :][labels].flatten(), color=color1, alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
-        ax[0].hist(self.vel_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
+        ax[0].hist(self.vel_avg[:, 0, :, :][~labels].flatten(), color=color2, alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
         # ax[0].hist(mix_vel.flatten(), color='k', alpha=0.5, bins=100, density=True, histtype='stepfilled')
-        ax[0].set(title='$v$ distribution', xlabel='$v_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
+        ax[0].set(xlabel='$v_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
 
         ax[1].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
-        ax[1].hist(self.phi_avg[:, 0, :, :][labels].flatten(), color='b', alpha=0.5, bins=100,
+        ax[1].hist(self.vel_avg[:, 0, :, :][labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
+            labels].flatten(), color=color1, alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
-        ax[1].hist(self.phi_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
+        ax[1].hist(self.vel_avg[:, 0, :, :][~labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
+            ~labels].flatten(), color=color2, alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
-        ax[1].set(title='$\\phi$ distribution', xlabel='$\\phi_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
+        ax[1].set(xlabel='$v_i - \\phi_i$', xlim=(-1.1 * deltav, +1.1 * deltav))
 
-        ax[2].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
-        ax[2].hist(self.vel_avg[:, 0, :, :][labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
-            labels].flatten(), color='b', alpha=0.5, bins=100,
-                   density=True, histtype='stepfilled')
-        ax[2].hist(self.vel_avg[:, 0, :, :][~labels].flatten() - scale_factor * self.phi_avg[:, 0, :, :][
-            ~labels].flatten(), color='r', alpha=0.5, bins=100,
-                   density=True, histtype='stepfilled')
-        ax[2].set(title='$v - \\phi$ distribution', xlabel='$v_i - \\phi_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
-
-        fig.suptitle(f'$N_r = {nr}, s_0 = {deltav}, \\rho = {density}$')
+        # fig.suptitle(f'$N_r = {nr}, s_0 = {deltav}, \\rho = {density}$')
         plt.tight_layout()
         plt.show()
 
@@ -392,19 +426,26 @@ class DataClassifier(object):
 
 if __name__ == '__main__':
     rootdir = '/Users/nabeel/Data/ObservingAndInferring/SimData'
-    nr = 4
-    # density = 0.57706
+    cachedir = '/Volumes/Backyard/Data/cache/update_2222_mean'
+    # nrs = [1, 2, 4, 7, 9, 12, 14, 16, 19, 21]
+    # deltavs = [3, 2, 1, 0.75, 0.5, 0.1]
+    # densities = [0.57706, 0.45792, 0.30847, 0.22182, ]
+
+    nr = 2
     density = 0.45792
-    # density = 0.22182
-    deltav = 0.75
-    # deltav = 1
+    deltav = 1
     f = lambda r: 1 #np.exp(-(r / 3) ** 2)
     dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav,
                         f=f,
-                        realizations=10, cachedir=None)
-    # dc.scatterplot(scale_factor=dc.scale_factor_analytical, scale_factor_2=dc.scale_factor_svm) #dc.scale_factor_analytical)
-    dc.show_distributions(scale_factor=dc.scale_factor_analytical) #dc.scale_factor_analytical)
-    # dc.show_distributions(scale_factor=dc.scale_factor_svm)
+                        realizations=100, cachedir=cachedir)
+    mu1 = dc.get_scale_factor_svm(balanced=True)
+    mu2 = dc.get_scale_factor_svm(balanced=False)
+    mu3 = get_scale_factor_analytical(nr, deltav, density, f)
+    # dc.scatterplot(scale_factor=mu3, color1=C_BLUE, color2=C_RED) #dc.scale_factor_analytical)
+    # dc.show_distributions_2d(scale_factor=dc.scale_factor_analytical, color1=C_BLUE_DARK, color2=C_RED_DARK)
+    dc.show_distributions(scale_factor=mu3, color1=C_BLUE, color2=C_RED)
+    # dc.show_distributions_2d(scale_factor=mu3, color1=C_BLUE, color2=C_RED)
+    # dc.show_distributions(scale_factor=mu2)
 
     # fig, ax = plt.subplots(figsize=(7, 7))
     # ax.scatter(dc.vel[:, 0, 0, :].squeeze(), dc.vel[:, 0, :, :].squeeze())

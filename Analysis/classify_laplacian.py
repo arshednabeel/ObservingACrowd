@@ -52,8 +52,8 @@ class DataClassifier(object):
                     data = pickle.load(cache)
                 self.vel = data['vel']
                 self.vel_avg = data['vel_avg']
-                self.psi = data['psi']
-                self.psi_avg = data['psi_avg']
+                self.psi = data['phi']
+                self.psi_avg = data['phi_avg']
                 self.labels = data['labels']
                 return
             else:
@@ -170,14 +170,14 @@ class DataClassifier(object):
         ax[0].hist(self.vel_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
         # ax[0].hist(mix_vel.flatten(), color='k', alpha=0.5, bins=100, density=True, histtype='stepfilled')
-        ax[0].set(title='$v$ distribution', xlabel='$v_i$', xlim=(-1.5 * deltav, +1.5 * deltav))
+        ax[0].set(title='$v$ distribution', xlabel='$v_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
 
         ax[1].axvline(0, color=(0.6, 0.6, 0.6), linewidth=1)
         ax[1].hist(self.psi_avg[:, 0, :, :][labels].flatten(), color='b', alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
         ax[1].hist(self.psi_avg[:, 0, :, :][~labels].flatten(), color='r', alpha=0.5, bins=100,
                    density=True, histtype='stepfilled')
-        ax[1].set(title='$\\psi$ distribution', xlabel='$\\phi_i$', xlim=(-1.5 * deltav, +1.5 * deltav))
+        ax[1].set(title='$\\psi$ distribution', xlabel='$\\phi_i$')#, xlim=(-1.5 * deltav, +1.5 * deltav))
 
         fig.suptitle(f'$N_r = {nr}, s_0 = {deltav}, \\rho = {density}$')
         plt.tight_layout()
@@ -190,9 +190,9 @@ if __name__ == '__main__':
     # density = 0.57706
     density = 0.45792
     # density = 0.22182
-    # deltav = 0.75
-    deltav = 2
-    dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav, mode='',
+    deltav = 0.75
+    # deltav = 2
+    dc = DataClassifier(rootdir=rootdir, nr=nr, density=density, deltav=deltav, mode='angle',
                         realizations=10, cachedir=None)
     dc.show_distributions()
 
