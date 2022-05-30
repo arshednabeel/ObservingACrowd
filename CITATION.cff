@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Nabeel"
+  given-names: "Arshed"
+  orcid: "https://orcid.org/0000-0001-9750-9070"
+- family-names: "Masila"
+  given-names: "Danny Raj"
+  orcid: "https://orcid.org/0000-0002-6983-0390"
+title: "ObservingACrowd"
+version: 1.0.0
+url: "https://github.com/arshednabeel/ObservingACrowd"
